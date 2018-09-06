@@ -293,7 +293,7 @@ func (ts *testSystem) runTest(numMsgs, numDeletes, timeout int, normalClients, s
 
 	// Main test runner loop to do reads/writes until completion (or until timeout)
 	for slowReads+normalReads < totalReads ||
-		slowGetWrites+normalGetWrites < totalGetWrites {
+		slowGetWrites+normalGetWrites < totalGetWrites-numDeletes {
 
 		select {
 		case cmd := <-readChan:
@@ -310,6 +310,10 @@ func (ts *testSystem) runTest(numMsgs, numDeletes, timeout int, normalClients, s
 
 			// Verify this kv-pair is being read the correct number of times
 			if v, ok := keyValueTrackMap[msg]; !ok {
+				if keyCount := keyMap[msg]; keyCount == 0 {
+					return fmt.Errorf("client should have deleted: %s", msg)
+				}
+
 				// Abort! Client received a message that was never sent.
 				return fmt.Errorf("client read unexpected message: %s", msg)
 			} else if v > 1 {
@@ -327,7 +331,7 @@ func (ts *testSystem) runTest(numMsgs, numDeletes, timeout int, normalClients, s
 			}
 
 		case cmd := <-writeChan:
-			// Make PUT request ========================================================================================
+			// Make PUT request =======================================================================================
 
 			var key, value string
 			// Synchronizing writes is necessary because messages are read
@@ -372,9 +376,9 @@ func (ts *testSystem) runTest(numMsgs, numDeletes, timeout int, normalClients, s
 				}
 			}
 
-			// Make DELETE request =====================================================================================
-
 			if totalDeletes < numDeletes {
+				// Make DELETE request ================================================================================
+
 				// Get a random key to delete
 				keyToDelete := getRandomKey(keyValueMap)
 
@@ -390,34 +394,34 @@ func (ts *testSystem) runTest(numMsgs, numDeletes, timeout int, normalClients, s
 				}
 
 				totalDeletes++
-			}
-
-			totalReads += keyMap[key]
-			if !cli.slow {
-				totalNonSlowReads += keyMap[key]
-			}
-
-			// Make GET request ========================================================================================
-
-			request := fmt.Sprintf("get,%s\n", key)
-
-			for _, v := range keyValueMap[key] {
-				keyValue := fmt.Sprintf("%s,%s", key, v)
-				if _, ok := keyValueTrackMap[keyValue]; !ok {
-					keyValueTrackMap[keyValue] = 1
-				} else {
-					keyValueTrackMap[keyValue] += 1
-				}
-			}
-
-			if _, err := cli.conn.Write([]byte(request)); err != nil {
-				// Abort! Error writing to the network.
-				return err
-			}
-			if hasSlowClients && cli.slow {
-				slowGetWrites++
 			} else {
-				normalGetWrites++
+				// Make GET request ===================================================================================
+
+				totalReads += keyMap[key]
+				if !cli.slow {
+					totalNonSlowReads += keyMap[key]
+				}
+
+				request := fmt.Sprintf("get,%s\n", key)
+
+				for _, v := range keyValueMap[key] {
+					keyValue := fmt.Sprintf("%s,%s", key, v)
+					if _, ok := keyValueTrackMap[keyValue]; !ok {
+						keyValueTrackMap[keyValue] = 1
+					} else {
+						keyValueTrackMap[keyValue] += 1
+					}
+				}
+
+				if _, err := cli.conn.Write([]byte(request)); err != nil {
+					// Abort! Error writing to the network.
+					return err
+				}
+				if hasSlowClients && cli.slow {
+					slowGetWrites++
+				} else {
+					normalGetWrites++
+				}
 			}
 
 		case <-timeoutChan:
